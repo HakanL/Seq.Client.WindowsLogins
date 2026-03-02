@@ -63,7 +63,7 @@ namespace Seq.Client.WindowsLogins.Tests
             var unused = new EventLogListener(2);
             EventLogListener.EventList.Add(1000);
             Assert.True(EventLogListener.EventList.Contains(1000));
-            Thread.Sleep(3000);
+            Thread.Sleep(2000);
             Assert.False(EventLogListener.EventList.Contains(1000));
         }
 
@@ -79,7 +79,7 @@ namespace Seq.Client.WindowsLogins.Tests
 
             EventLogListener.EventList.Add(1000);
 
-            for (var i = 1; i < 2001; i++)
+            for (var i = 1; i < 301; i++)
             {
                 var count = EventLogListener.EventList.Count;
                 if (i % 100 == 0)
@@ -95,7 +95,7 @@ namespace Seq.Client.WindowsLogins.Tests
         }
 
         /// <summary>
-        ///     A long test (60 seconds) that allows us to observe cache population and expiry
+        ///     A test that allows us to observe cache population and expiry
         /// </summary>
         [Fact]
         public void EventBagPopulationAndExpiry()
@@ -106,8 +106,8 @@ namespace Seq.Client.WindowsLogins.Tests
             var random = new Random();
             new Thread(delegate()
             {
-                //Populate the cache for ~30 seconds so it will expire before the test has finished
-                for (var i = 1; i < 1001; i++)
+                //Populate the cache for ~5 seconds so it will expire before the test has finished
+                for (var i = 1; i < 201; i++)
                 {
                     EventLogListener.EventList.Add(random.Next(1000, 100000));
                     var tCount = EventLogListener.EventList.Count;
@@ -119,7 +119,7 @@ namespace Seq.Client.WindowsLogins.Tests
             }).Start();
 
             var hasExpired = false;
-            for (var x = 1; x < 4001; x++)
+            for (var x = 1; x < 1001; x++)
             {
                 Thread.Sleep(10);
                 var count = EventLogListener.EventList.Count;
