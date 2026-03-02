@@ -1,0 +1,68 @@
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.x'
+
+    - name: Restore dependencies
+      run: dotnet restore Seq.Client.WindowsLogins.sln
+
+    - name: Build
+      run: dotnet build Seq.Client.WindowsLogins.sln --configuration Release --no-restore
+
+    - name: Test
+      run: dotnet test Seq.Client.WindowsLogins.sln --configuration Release --no-build --verbosity normal
+
+    - name: Get version
+      id: get_version
+      shell: pwsh
+      run: |
+        $xml = [xml](Get-Content "Seq.Client.WindowsLogins/Seq.Client.WindowsLogins.csproj")
+        $version = $xml.Project.PropertyGroup.Version | Where-Object { $_ -ne $null } | Select-Object -First 1
+        if (-not $version) {
+          Write-Error "Could not extract version from Seq.Client.WindowsLogins.csproj. Ensure a <Version> element is present."
+          exit 1
+        }
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+
+    - name: Create release package
+      shell: pwsh
+      run: |
+        $version = "${{ steps.get_version.outputs.VERSION }}"
+        $outputDir = "Seq.Client.WindowsLogins/bin/Release/net462"
+        $zipName = "Seq.Client.WindowsLogins-$version.zip"
+        Compress-Archive -Path "$outputDir/*" -DestinationPath $zipName
+        echo "ZIP_NAME=$zipName" >> $env:GITHUB_OUTPUT
+      id: create_package
+
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Seq.Client.WindowsLogins-${{ steps.get_version.outputs.VERSION }}
+        path: ${{ steps.create_package.outputs.ZIP_NAME }}
+
+    - name: Create GitHub release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ steps.get_version.outputs.VERSION }}
+        name: Release v${{ steps.get_version.outputs.VERSION }}
+        files: ${{ steps.create_package.outputs.ZIP_NAME }}
+        generate_release_notes: true
