@@ -492,9 +492,10 @@ namespace Seq.Client.WindowsLogins
 
         public static bool IsFailureNotValid(IList<object> eventProperties)
         {
-            //Only interactive users are of interest - logonType 2 and 10 (LogonType is at index 10 in event 4625)
-            return ((uint) eventProperties[10] != 2 && (uint) eventProperties[10] != 10) ||
-                   (string) eventProperties[19] == "-";
+            //Any remote authentication failure is of interest (IpAddress != "-").
+            //On standalone NTLM servers, RDP logon failures generate LogonType=3 (network) rather than LogonType=10;
+            //the IpAddress check alone is sufficient to exclude purely local authentication failures.
+            return (string) eventProperties[19] == "-";
         }
 
         public static bool IsLogoffNotValid(IList<object> eventProperties, bool isUserInitiated)

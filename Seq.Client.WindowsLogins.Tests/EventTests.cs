@@ -141,6 +141,26 @@ namespace Seq.Client.WindowsLogins.Tests
         }
 
         /// <summary>
+        ///     Ensure a type 3 (Network) failure with a remote IP is treated as valid.
+        ///     On standalone NTLM servers, RDP logon failures generate LogonType=3 rather than LogonType=10.
+        /// </summary>
+        [Fact]
+        public void EvaluatesValidNtlmRdpFailureEvent()
+        {
+            IList<object> test = new List<object>
+            {
+                "S-1-0-0", "-", "-", "0x0",
+                "S-1-0-0", "HLindestaf", "HPIDEV2017",
+                "0xC000006D", "%%2313", "0xC000006A",
+                (uint) 3, "NtLmSsp ", "NTLM", "HPIDEV2017",
+                "-", "-", 0,
+                0, "-", "10.80.6.1", 0
+            };
+
+            Assert.False(EventLogListener.IsFailureNotValid(test));
+        }
+
+        /// <summary>
         ///     Ensure invalid failure event properties (non-interactive logon type) won't be passed (event 4625)
         /// </summary>
         [Fact]

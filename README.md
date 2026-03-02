@@ -30,9 +30,11 @@ The following options can be set in `Seq.Client.WindowsLogins.exe.config`:
 
 ### Notes on logon filtering
 
-Interactive logons are identified by **LogonType 2** (console), **LogonType 7** (Unlock), and **LogonType 10** (Remote Desktop / RDP). Non-interactive logons (services, batch jobs, network shares, etc.) are excluded. This filtering applies equally to success, failure, and logoff events.
+Successful logons (Event 4624) are identified by **LogonType 2** (console), **LogonType 7** (Unlock), and **LogonType 10** (Remote Desktop / RDP). Non-interactive logons (services, batch jobs, etc.) are excluded.
 
 **LogonType 7 (Unlock)** events are included because reconnecting to an existing RDP session generates LogonType 7 events (not LogonType 10) when the session screen is locked. These events with a remote source IP address (`IpAddress != "-"`) are treated as RDP authentication events. Local console unlocks (`IpAddress = "-"`) are filtered out.
+
+For **logon failures** (Event 4625, enabled via `IncludeLogonFailures`), any failure with a remote source IP address is captured regardless of LogonType. This is necessary because on standalone NTLM servers, RDP logon failures generate LogonType=3 (Network) rather than LogonType=10. The `IpAddress != "-"` check alone is used to exclude purely local authentication failures.
 
 On **standalone servers** (not domain-joined), Windows uses NTLM rather than Kerberos, so the `LogonGuid` field in logon events is always all-zeros. The service correctly handles this and does **not** filter out events based on a zero `LogonGuid`.
 
