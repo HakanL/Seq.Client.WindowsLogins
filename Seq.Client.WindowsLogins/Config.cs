@@ -17,6 +17,8 @@ namespace Seq.Client.WindowsLogins
             LogFolder = ConfigurationManager.AppSettings["LogFolder"];
             HeartbeatInterval = GetInt(ConfigurationManager.AppSettings["HeartbeatInterval"]);
             IsDebug = GetBool(ConfigurationManager.AppSettings["IsDebug"]);
+            IncludeLogonFailures = GetBool(ConfigurationManager.AppSettings["IncludeLogonFailures"]);
+            IncludeLogoffEvents = GetBool(ConfigurationManager.AppSettings["IncludeLogoffEvents"]);
             ProjectKey = ConfigurationManager.AppSettings["ProjectKey"];
             Responders = ConfigurationManager.AppSettings["Responders"];
             Priority = ConfigurationManager.AppSettings["Priority"];
@@ -70,6 +72,8 @@ namespace Seq.Client.WindowsLogins
         public static string LogFolder { get; }
         public static int HeartbeatInterval { get; }
         public static bool IsDebug { get; }
+        public static bool IncludeLogonFailures { get; }
+        public static bool IncludeLogoffEvents { get; }
         public static string ProjectKey { get; }
         public static string Priority { get; }
         public static string Responders { get; }
