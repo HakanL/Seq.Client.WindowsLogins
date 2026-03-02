@@ -17,6 +17,10 @@ namespace Seq.Client.WindowsLogins
         private static readonly DateTime ServiceStart = DateTime.Now;
         private static long _logonsDetected;
         private static long _nonInteractiveLogons;
+        private static long _logonFailuresDetected;
+        private static long _nonInteractiveFailures;
+        private static long _logoffsDetected;
+        private static long _nonInteractiveLogoffs;
         private static long _unhandledEvents;
         private static long _oldEvents;
         private static long _emptyEvents;
@@ -47,9 +51,8 @@ namespace Seq.Client.WindowsLogins
                 _isInteractive = isInteractive;
                 Log.Level(LurgLevel.Debug).Add("Starting listener");
 
-                //Query for success audits with event id 4624
-                _eventLog = new EventLogQuery("Security", PathType.LogName,
-                    "*[System[band(Keywords,9007199254740992) and (EventID=4624)]]");
+                //Build query based on configured options
+                _eventLog = new EventLogQuery("Security", PathType.LogName, BuildEventQuery());
                 _watcher = new EventLogWatcher(_eventLog);
                 _watcher.EventRecordWritten += OnEntryWritten;
                 _watcher.Enabled = true;
@@ -78,6 +81,10 @@ namespace Seq.Client.WindowsLogins
                 .AddProperty("ItemCount", EventList.Count)
                 .AddProperty("LogonsDetected", _logonsDetected)
                 .AddProperty("NonInteractiveLogons", _nonInteractiveLogons)
+                .AddProperty("LogonFailuresDetected", _logonFailuresDetected)
+                .AddProperty("NonInteractiveFailures", _nonInteractiveFailures)
+                .AddProperty("LogoffsDetected", _logoffsDetected)
+                .AddProperty("NonInteractiveLogoffs", _nonInteractiveLogoffs)
                 .AddProperty("OldEvents", _oldEvents)
                 .AddProperty("EmptyEvents", _emptyEvents)
                 .AddProperty("UnhandledEvents", _unhandledEvents)
@@ -85,8 +92,10 @@ namespace Seq.Client.WindowsLogins
                 .Add(
                     Config.IsDebug
                         ? "{AppName:l} Heartbeat [{MachineName:l}] - Event cache: {ItemCount}, Logons detected: {LogonsDetected}, " +
-                          "Non-interactive logons: {NonInteractiveLogons}, Unhandled events: {UnhandledEvents}, Old events seen: {OldEvents}, " +
-                          "Empty events: {EmptyEvents}, Next Heartbeat: {NextTime:H:mm:ss tt}"
+                          "Non-interactive logons: {NonInteractiveLogons}, Logon failures: {LogonFailuresDetected}, " +
+                          "Non-interactive failures: {NonInteractiveFailures}, Logoffs: {LogoffsDetected}, " +
+                          "Non-interactive logoffs: {NonInteractiveLogoffs}, Unhandled events: {UnhandledEvents}, " +
+                          "Old events seen: {OldEvents}, Empty events: {EmptyEvents}, Next Heartbeat: {NextTime:H:mm:ss tt}"
                         : "{AppName:l} Heartbeat [{MachineName:l}] - Event cache: {ItemCount}, Next Heartbeat: {NextTime:H:mm:ss tt}");
 
             if (_heartbeatTimer.AutoReset) return;
@@ -139,6 +148,33 @@ namespace Seq.Client.WindowsLogins
             //Ensure that we track events we've already seen
             EventList.Add(entry.RecordId);
 
+            try
+            {
+                switch (entry.Id)
+                {
+                    case 4624:
+                        HandleLogonSuccessEvent(entry);
+                        break;
+                    case 4625:
+                        HandleLogonFailureEvent(entry);
+                        break;
+                    case 4634:
+                    case 4647:
+                        HandleLogoffEvent(entry);
+                        break;
+                    default:
+                        _unhandledEvents++;
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Exception(ex).Add("Error parsing event: {Message:l}", ex.Message);
+            }
+        }
+
+        private static void HandleLogonSuccessEvent(EventRecord entry)
+        {
             try
             {
                 //Get all the properties of interest for passing to Seq
@@ -240,12 +276,230 @@ namespace Seq.Client.WindowsLogins
             }
         }
 
+        private static void HandleLogonFailureEvent(EventRecord entry)
+        {
+            try
+            {
+                var failureEventPropertySelector = new EventLogPropertySelector(new[]
+                {
+                    "Event/EventData/Data[@Name='SubjectUserSid']",
+                    "Event/EventData/Data[@Name='SubjectUserName']",
+                    "Event/EventData/Data[@Name='SubjectDomainName']",
+                    "Event/EventData/Data[@Name='SubjectLogonId']",
+                    "Event/EventData/Data[@Name='TargetUserSid']",
+                    "Event/EventData/Data[@Name='TargetUserName']",
+                    "Event/EventData/Data[@Name='TargetDomainName']",
+                    "Event/EventData/Data[@Name='Status']",
+                    "Event/EventData/Data[@Name='FailureReason']",
+                    "Event/EventData/Data[@Name='SubStatus']",
+                    "Event/EventData/Data[@Name='LogonType']",
+                    "Event/EventData/Data[@Name='LogonProcessName']",
+                    "Event/EventData/Data[@Name='AuthenticationPackageName']",
+                    "Event/EventData/Data[@Name='WorkstationName']",
+                    "Event/EventData/Data[@Name='TransmittedServices']",
+                    "Event/EventData/Data[@Name='LmPackageName']",
+                    "Event/EventData/Data[@Name='KeyLength']",
+                    "Event/EventData/Data[@Name='ProcessId']",
+                    "Event/EventData/Data[@Name='ProcessName']",
+                    "Event/EventData/Data[@Name='IpAddress']",
+                    "Event/EventData/Data[@Name='IpPort']"
+                });
+
+                var eventProperties = ((EventLogRecord) entry).GetPropertyValues(failureEventPropertySelector);
+
+                if (eventProperties.Count != 21)
+                {
+                    _unhandledEvents++;
+                    return;
+                }
+
+                if (IsFailureNotValid(eventProperties))
+                {
+                    _nonInteractiveFailures++;
+                    return;
+                }
+
+                _logonFailuresDetected++;
+
+                var eventTimeLong = string.Empty;
+                var eventTimeShort = string.Empty;
+                if (entry.TimeCreated != null)
+                {
+                    eventTimeLong = ((DateTime) entry.TimeCreated).ToString("F");
+                    eventTimeShort = ((DateTime) entry.TimeCreated).ToString("G");
+                }
+
+                Log.Level(Extensions.MapLogLevel(EventLogEntryType.FailureAudit))
+                    .SetTimestamp(entry.TimeCreated ?? DateTime.Now)
+                    .AddProperty("EventId", (long) entry.Id)
+                    .AddProperty("InstanceId", entry.Id)
+                    .AddProperty("EventTime", entry.TimeCreated)
+                    .AddProperty("EventTimeLong", eventTimeLong)
+                    .AddProperty("EventTimeShort", eventTimeShort)
+                    .AddProperty("Source", entry.ProviderName)
+                    .AddProperty("Category", entry.LevelDisplayName)
+                    .AddProperty("EventLogName", entry.LogName)
+                    .AddProperty("EventRecordID", entry.RecordId)
+                    .AddProperty("Details", entry.FormatDescription())
+                    .AddProperty("SubjectUserSid", eventProperties[0])
+                    .AddProperty("SubjectUserName", eventProperties[1])
+                    .AddProperty("SubjectDomainName", eventProperties[2])
+                    .AddProperty("SubjectLogonId", eventProperties[3])
+                    .AddProperty("TargetUserSid", eventProperties[4])
+                    .AddProperty("TargetUserName", eventProperties[5])
+                    .AddProperty("TargetDomainName", eventProperties[6])
+                    .AddProperty("Status", eventProperties[7])
+                    .AddProperty("FailureReason", eventProperties[8])
+                    .AddProperty("SubStatus", eventProperties[9])
+                    .AddProperty("LogonType", eventProperties[10])
+                    .AddProperty("LogonProcessName", eventProperties[11])
+                    .AddProperty("AuthenticationPackageName", eventProperties[12])
+                    .AddProperty("WorkstationName", eventProperties[13])
+                    .AddProperty("TransmittedServices", eventProperties[14])
+                    .AddProperty("LmPackageName", eventProperties[15])
+                    .AddProperty("KeyLength", eventProperties[16])
+                    .AddProperty("ProcessId", eventProperties[17])
+                    .AddProperty("ProcessName", eventProperties[18])
+                    .AddProperty("IpAddress", eventProperties[19])
+                    .AddProperty("IpPort", eventProperties[20])
+                    .AddProperty(nameof(Config.ProjectKey), Config.ProjectKey)
+                    .AddProperty(nameof(Config.Priority), Config.Priority)
+                    .AddProperty(nameof(Config.Responders), Config.Responders)
+                    .AddProperty(nameof(Config.Tags), Config.Tags)
+                    .AddProperty(nameof(Config.InitialTimeEstimate), Config.InitialTimeEstimate)
+                    .AddProperty(nameof(Config.RemainingTimeEstimate), Config.RemainingTimeEstimate)
+                    .AddProperty(nameof(Config.DueDate), Config.DueDate)
+                    .Add(
+                        "[{AppName:l}] Login failure detected on {MachineName:l} - {TargetDomainName:l}\\{TargetUserName:l} at {EventTime:F}");
+            }
+            catch (Exception ex)
+            {
+                Log.Exception(ex).Add("Error parsing event: {Message:l}", ex.Message);
+            }
+        }
+
+        private static void HandleLogoffEvent(EventRecord entry)
+        {
+            try
+            {
+                // Event 4647 (user-initiated logoff) has 4 properties; 4634 (logoff) has 5
+                var isUserInitiated = entry.Id == 4647;
+                var propertyNames = isUserInitiated
+                    ? new[]
+                    {
+                        "Event/EventData/Data[@Name='TargetUserSid']",
+                        "Event/EventData/Data[@Name='TargetUserName']",
+                        "Event/EventData/Data[@Name='TargetDomainName']",
+                        "Event/EventData/Data[@Name='TargetLogonId']"
+                    }
+                    : new[]
+                    {
+                        "Event/EventData/Data[@Name='TargetUserSid']",
+                        "Event/EventData/Data[@Name='TargetUserName']",
+                        "Event/EventData/Data[@Name='TargetDomainName']",
+                        "Event/EventData/Data[@Name='TargetLogonId']",
+                        "Event/EventData/Data[@Name='LogonType']"
+                    };
+
+                var logoffEventPropertySelector = new EventLogPropertySelector(propertyNames);
+                var eventProperties = ((EventLogRecord) entry).GetPropertyValues(logoffEventPropertySelector);
+
+                var expectedCount = isUserInitiated ? 4 : 5;
+                if (eventProperties.Count != expectedCount)
+                {
+                    _unhandledEvents++;
+                    return;
+                }
+
+                if (IsLogoffNotValid(eventProperties, isUserInitiated))
+                {
+                    _nonInteractiveLogoffs++;
+                    return;
+                }
+
+                _logoffsDetected++;
+
+                var eventTimeLong = string.Empty;
+                var eventTimeShort = string.Empty;
+                if (entry.TimeCreated != null)
+                {
+                    eventTimeLong = ((DateTime) entry.TimeCreated).ToString("F");
+                    eventTimeShort = ((DateTime) entry.TimeCreated).ToString("G");
+                }
+
+                Log.Level(Extensions.MapLogLevel(EventLogEntryType.SuccessAudit))
+                    .SetTimestamp(entry.TimeCreated ?? DateTime.Now)
+                    .AddProperty("EventId", (long) entry.Id)
+                    .AddProperty("InstanceId", entry.Id)
+                    .AddProperty("EventTime", entry.TimeCreated)
+                    .AddProperty("EventTimeLong", eventTimeLong)
+                    .AddProperty("EventTimeShort", eventTimeShort)
+                    .AddProperty("Source", entry.ProviderName)
+                    .AddProperty("Category", entry.LevelDisplayName)
+                    .AddProperty("EventLogName", entry.LogName)
+                    .AddProperty("EventRecordID", entry.RecordId)
+                    .AddProperty("Details", entry.FormatDescription())
+                    .AddProperty("TargetUserSid", eventProperties[0])
+                    .AddProperty("TargetUserName", eventProperties[1])
+                    .AddProperty("TargetDomainName", eventProperties[2])
+                    .AddProperty("TargetLogonId", eventProperties[3])
+                    .AddProperty(nameof(Config.ProjectKey), Config.ProjectKey)
+                    .AddProperty(nameof(Config.Priority), Config.Priority)
+                    .AddProperty(nameof(Config.Responders), Config.Responders)
+                    .AddProperty(nameof(Config.Tags), Config.Tags)
+                    .AddProperty(nameof(Config.InitialTimeEstimate), Config.InitialTimeEstimate)
+                    .AddProperty(nameof(Config.RemainingTimeEstimate), Config.RemainingTimeEstimate)
+                    .AddProperty(nameof(Config.DueDate), Config.DueDate)
+                    .Add(
+                        "[{AppName:l}] Logoff detected on {MachineName:l} - {TargetDomainName:l}\\{TargetUserName:l} at {EventTime:F}");
+            }
+            catch (Exception ex)
+            {
+                Log.Exception(ex).Add("Error parsing event: {Message:l}", ex.Message);
+            }
+        }
+
+        private static string BuildEventQuery()
+        {
+            var successEventIds = new List<string> {"EventID=4624"};
+
+            if (Config.IncludeLogoffEvents)
+            {
+                successEventIds.Add("EventID=4634");
+                successEventIds.Add("EventID=4647");
+            }
+
+            var successFilter =
+                $"band(Keywords,9007199254740992) and ({string.Join(" or ", successEventIds)})";
+
+            if (Config.IncludeLogonFailures)
+                return
+                    $"*[System[({successFilter}) or (band(Keywords,4503599627370496) and EventID=4625)]]";
+
+            return $"*[System[{successFilter}]]";
+        }
+
         public static bool IsNotValid(IList<object> eventProperties)
         {
             //Only interactive users are of interest - logonType 2 and 10. Some non-interactive services can launch processes with logontype 2 but can be filtered.
-            return (uint) eventProperties[8] != 2 && (uint) eventProperties[8] != 10 ||
-                   (string) eventProperties[18] == "-" ||
-                   eventProperties[12].ToString() == "00000000-0000-0000-0000-000000000000";
+            //Note: LogonGuid is intentionally not checked here; on standalone servers using NTLM it is always all-zeros, which would incorrectly suppress RDP (type 10) logons.
+            return ((uint) eventProperties[8] != 2 && (uint) eventProperties[8] != 10) ||
+                   (string) eventProperties[18] == "-";
+        }
+
+        public static bool IsFailureNotValid(IList<object> eventProperties)
+        {
+            //Only interactive users are of interest - logonType 2 and 10 (LogonType is at index 10 in event 4625)
+            return ((uint) eventProperties[10] != 2 && (uint) eventProperties[10] != 10) ||
+                   (string) eventProperties[19] == "-";
+        }
+
+        public static bool IsLogoffNotValid(IList<object> eventProperties, bool isUserInitiated)
+        {
+            //For event 4647 (user-initiated logoff) there is no LogonType field; always include it.
+            //For event 4634, only interactive logon types 2 and 10 are of interest (LogonType is at index 4).
+            return !isUserInitiated &&
+                   (uint) eventProperties[4] != 2 && (uint) eventProperties[4] != 10;
         }
     }
 }
