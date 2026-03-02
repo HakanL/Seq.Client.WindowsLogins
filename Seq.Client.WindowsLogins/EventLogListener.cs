@@ -481,9 +481,12 @@ namespace Seq.Client.WindowsLogins
 
         public static bool IsNotValid(IList<object> eventProperties)
         {
-            //Only interactive users are of interest - logonType 2 and 10. Some non-interactive services can launch processes with logontype 2 but can be filtered.
-            //Note: LogonGuid is intentionally not checked here; on standalone servers using NTLM it is always all-zeros, which would incorrectly suppress RDP (type 10) logons.
-            return ((uint) eventProperties[8] != 2 && (uint) eventProperties[8] != 10) ||
+            //Interactive logon types of interest: 2 (Interactive), 7 (Unlock - fired on RDP reconnect when screen is locked),
+            //10 (RemoteInteractive/RDP). Some non-interactive services can launch processes with logonType 2 but are filtered
+            //by the IpAddress check. Type 7 events with IpAddress="-" are local console unlocks and are also filtered.
+            //Note: LogonGuid is intentionally not checked here; on standalone servers using NTLM it is always all-zeros,
+            //which would incorrectly suppress RDP (type 7/10) logons.
+            return ((uint) eventProperties[8] != 2 && (uint) eventProperties[8] != 7 && (uint) eventProperties[8] != 10) ||
                    (string) eventProperties[18] == "-";
         }
 

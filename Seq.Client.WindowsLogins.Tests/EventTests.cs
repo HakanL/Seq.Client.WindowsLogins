@@ -56,6 +56,47 @@ namespace Seq.Client.WindowsLogins.Tests
         }
 
         /// <summary>
+        ///     Ensure a type 7 (Unlock) logon with a remote IpAddress is treated as valid.
+        ///     Reconnecting to an existing RDP session generates LogonType=7, not LogonType=10,
+        ///     so this must be accepted when there is a remote source address.
+        /// </summary>
+        [Fact]
+        public void EvaluatesValidRdpUnlockEvent()
+        {
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry",
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry", (uint) 7, "Barry", "BarryAuth",
+                "BARRYPC",
+                Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
+                "10.80.6.1", 0,
+                "Impersonation"
+            };
+
+            Assert.False(EventLogListener.IsNotValid(test));
+        }
+
+        /// <summary>
+        ///     Ensure a type 7 (Unlock) logon with IpAddress="-" is filtered.
+        ///     This is a local console unlock and is not of interest.
+        /// </summary>
+        [Fact]
+        public void EvaluatesInvalidLocalConsoleUnlockEvent()
+        {
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry",
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry", (uint) 7, "Barry", "BarryAuth",
+                "BARRYPC",
+                Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
+                "-", 0,
+                "Impersonation"
+            };
+
+            Assert.True(EventLogListener.IsNotValid(test));
+        }
+
+        /// <summary>
         ///     Ensure invalid properties won't be passed
         /// </summary>
         [Fact]
