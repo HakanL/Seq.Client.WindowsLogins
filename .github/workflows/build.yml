@@ -82,7 +82,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: Seq.Client.WindowsLogins-${{ env.PACKAGE_VERSION }}
-        path: ${{ env.ZIP_NAME }}
+        path: Seq.Client.WindowsLogins/bin/Release/net462/
 
     - name: Comment on PR with artifact link
       if: github.event_name == 'pull_request'
