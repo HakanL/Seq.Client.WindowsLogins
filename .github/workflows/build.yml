@@ -16,6 +16,44 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    - name: Get base version from version.json
+      id: version
+      uses: notiz-dev/github-action-json-property@release
+      with:
+        path: version.json
+        prop_path: 'version'
+
+    - name: Set branch name (push)
+      if: startsWith(github.ref, 'refs/heads/')
+      shell: pwsh
+      run: |
+        $branch = "${{ github.ref }}" -replace 'refs/heads/', '' -replace '[\s_]', '-'
+        echo "BRANCH_NAME=$branch" >> $env:GITHUB_ENV
+
+    - name: Set branch name (PR)
+      if: startsWith(github.ref, 'refs/pull/')
+      shell: pwsh
+      run: |
+        $prNumber = "${{ github.ref }}" -replace 'refs/pull/', '' -replace '/merge', ''
+        echo "BRANCH_NAME=PR-$prNumber" >> $env:GITHUB_ENV
+
+    - name: Set package version (master)
+      if: github.ref == 'refs/heads/master'
+      shell: pwsh
+      run: |
+        $numericVersion = "${{ steps.version.outputs.prop }}.${{ github.run_number }}"
+        echo "PACKAGE_VERSION=$numericVersion" >> $env:GITHUB_ENV
+        echo "ASSEMBLY_VERSION=$numericVersion.0" >> $env:GITHUB_ENV
+
+    - name: Set package version (non-master)
+      if: github.ref != 'refs/heads/master'
+      shell: pwsh
+      run: |
+        $sha = "${{ github.sha }}".Substring(0, 8)
+        $numericVersion = "${{ steps.version.outputs.prop }}.${{ github.run_number }}"
+        echo "PACKAGE_VERSION=$numericVersion-$env:BRANCH_NAME-$sha" >> $env:GITHUB_ENV
+        echo "ASSEMBLY_VERSION=$numericVersion.0" >> $env:GITHUB_ENV
+
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -25,44 +63,31 @@ jobs:
       run: dotnet restore Seq.Client.WindowsLogins.sln
 
     - name: Build
-      run: dotnet build Seq.Client.WindowsLogins.sln --configuration Release --no-restore
+      run: dotnet build Seq.Client.WindowsLogins.sln --configuration Release --no-restore /p:Version="$env:PACKAGE_VERSION" /p:AssemblyVersion="$env:ASSEMBLY_VERSION" /p:FileVersion="$env:ASSEMBLY_VERSION"
 
     - name: Test
       run: dotnet test Seq.Client.WindowsLogins.sln --configuration Release --no-build --verbosity normal
 
-    - name: Get version
-      id: get_version
-      shell: pwsh
-      run: |
-        $xml = [xml](Get-Content "Seq.Client.WindowsLogins/Seq.Client.WindowsLogins.csproj")
-        $version = $xml.Project.PropertyGroup.Version | Where-Object { $_ -ne $null } | Select-Object -First 1
-        if (-not $version) {
-          Write-Error "Could not extract version from Seq.Client.WindowsLogins.csproj. Ensure a <Version> element is present."
-          exit 1
-        }
-        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
-
     - name: Create release package
+      id: create_package
       shell: pwsh
       run: |
-        $version = "${{ steps.get_version.outputs.VERSION }}"
         $outputDir = "Seq.Client.WindowsLogins/bin/Release/net462"
-        $zipName = "Seq.Client.WindowsLogins-$version.zip"
+        $zipName = "Seq.Client.WindowsLogins-$env:PACKAGE_VERSION.zip"
         Compress-Archive -Path "$outputDir/*" -DestinationPath $zipName
-        echo "ZIP_NAME=$zipName" >> $env:GITHUB_OUTPUT
-      id: create_package
+        echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
 
     - name: Upload build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Seq.Client.WindowsLogins-${{ steps.get_version.outputs.VERSION }}
-        path: ${{ steps.create_package.outputs.ZIP_NAME }}
+        name: Seq.Client.WindowsLogins-${{ env.PACKAGE_VERSION }}
+        path: ${{ env.ZIP_NAME }}
 
     - name: Create GitHub release
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v${{ steps.get_version.outputs.VERSION }}
-        name: Release v${{ steps.get_version.outputs.VERSION }}
-        files: ${{ steps.create_package.outputs.ZIP_NAME }}
+        tag_name: v${{ env.PACKAGE_VERSION }}
+        name: Release v${{ env.PACKAGE_VERSION }}
+        files: ${{ env.ZIP_NAME }}
         generate_release_notes: true
