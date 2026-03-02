@@ -36,6 +36,26 @@ namespace Seq.Client.WindowsLogins.Tests
         }
 
         /// <summary>
+        ///     Ensure an RDP (type 10) logon with a zero LogonGuid is treated as valid.
+        ///     On standalone servers using NTLM, LogonGuid is always all-zeros; the old check incorrectly filtered these out.
+        /// </summary>
+        [Fact]
+        public void EvaluatesValidRdpEventWithZeroLogonGuid()
+        {
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry",
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry", (uint) 10, "Barry", "BarryAuth",
+                "BARRYPC",
+                Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
+                "192.168.1.100", 3389,
+                "Impersonation"
+            };
+
+            Assert.False(EventLogListener.IsNotValid(test));
+        }
+
+        /// <summary>
         ///     Ensure invalid properties won't be passed
         /// </summary>
         [Fact]
@@ -52,6 +72,94 @@ namespace Seq.Client.WindowsLogins.Tests
             };
 
             Assert.True(EventLogListener.IsNotValid(test));
+        }
+
+        /// <summary>
+        ///     Ensure valid failure event properties will be passed (event 4625)
+        /// </summary>
+        [Fact]
+        public void EvaluatesValidFailureEvent()
+        {
+            // 4625 property layout: SubjectUserSid[0], SubjectUserName[1], SubjectDomainName[2], SubjectLogonId[3],
+            //   TargetUserSid[4], TargetUserName[5], TargetDomainName[6],
+            //   Status[7], FailureReason[8], SubStatus[9],
+            //   LogonType[10], LogonProcessName[11], AuthenticationPackageName[12], WorkstationName[13],
+            //   TransmittedServices[14], LmPackageName[15], KeyLength[16],
+            //   ProcessId[17], ProcessName[18], IpAddress[19], IpPort[20]
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry",
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY",
+                "0xC000006D", "%%2313", "0xC000006A",
+                (uint) 10, "Barry", "BarryAuth", "BARRYPC",
+                "-", "-", 0,
+                1, " BARRY.EXE", "192.168.1.100", 3389
+            };
+
+            Assert.False(EventLogListener.IsFailureNotValid(test));
+        }
+
+        /// <summary>
+        ///     Ensure invalid failure event properties (non-interactive logon type) won't be passed (event 4625)
+        /// </summary>
+        [Fact]
+        public void EvaluatesInvalidFailureEvent()
+        {
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry",
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY",
+                "0xC000006D", "%%2313", "0xC000006A",
+                (uint) 3, "Barry", "BarryAuth", "BARRYPC",
+                "-", "-", 0,
+                1, " BARRY.EXE", "-", 0
+            };
+
+            Assert.True(EventLogListener.IsFailureNotValid(test));
+        }
+
+        /// <summary>
+        ///     Ensure a valid 4634 logoff event (interactive type 10) is accepted
+        /// </summary>
+        [Fact]
+        public void EvaluatesValidLogoffEvent()
+        {
+            // 4634 property layout: TargetUserSid[0], TargetUserName[1], TargetDomainName[2], TargetLogonId[3], LogonType[4]
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry", (uint) 10
+            };
+
+            Assert.False(EventLogListener.IsLogoffNotValid(test, false));
+        }
+
+        /// <summary>
+        ///     Ensure an invalid 4634 logoff event (non-interactive logon type) is rejected
+        /// </summary>
+        [Fact]
+        public void EvaluatesInvalidLogoffEvent()
+        {
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry", (uint) 3
+            };
+
+            Assert.True(EventLogListener.IsLogoffNotValid(test, false));
+        }
+
+        /// <summary>
+        ///     Ensure a 4647 user-initiated logoff event is always accepted (no LogonType field)
+        /// </summary>
+        [Fact]
+        public void EvaluatesValidUserInitiatedLogoffEvent()
+        {
+            // 4647 property layout: TargetUserSid[0], TargetUserName[1], TargetDomainName[2], TargetLogonId[3]
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry"
+            };
+
+            Assert.False(EventLogListener.IsLogoffNotValid(test, true));
         }
 
         /// <summary>
