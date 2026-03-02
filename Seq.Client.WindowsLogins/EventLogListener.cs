@@ -90,9 +90,9 @@ namespace Seq.Client.WindowsLogins
                         : "{AppName:l} Heartbeat [{MachineName:l}] - Event cache: {ItemCount}, Next Heartbeat: {NextTime:H:mm:ss tt}");
 
             if (_heartbeatTimer.AutoReset) return;
-            //Set the timer to 10 minutes after initial heartbeat
+            //Set the timer to the configured heartbeat interval after initial heartbeat
             _heartbeatTimer.AutoReset = true;
-            _heartbeatTimer.Interval = _isInteractive ? 10000 : Config.HeartbeatInterval;
+            _heartbeatTimer.Interval = Config.HeartbeatInterval;
             _heartbeatTimer.Start();
         }
 
