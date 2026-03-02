@@ -29,7 +29,7 @@ namespace Seq.Client.WindowsLogins.Tests
                 "BARRYPC",
                 Guid.Parse("00000000-0000-0000-0000-000000000001"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
                 "127.0.0.1", 1111,
-                "All The Impersonation"
+                "All The Impersonation", "%%1843", (ulong) 0
             };
 
             Assert.False(EventLogListener.IsNotValid(test));
@@ -49,7 +49,7 @@ namespace Seq.Client.WindowsLogins.Tests
                 "BARRYPC",
                 Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
                 "192.168.1.100", 3389,
-                "Impersonation"
+                "Impersonation", "%%1843", (ulong) 0
             };
 
             Assert.False(EventLogListener.IsNotValid(test));
@@ -70,7 +70,7 @@ namespace Seq.Client.WindowsLogins.Tests
                 "BARRYPC",
                 Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
                 "10.80.6.1", 0,
-                "Impersonation"
+                "Impersonation", "%%1843", (ulong) 0
             };
 
             Assert.False(EventLogListener.IsNotValid(test));
@@ -90,7 +90,7 @@ namespace Seq.Client.WindowsLogins.Tests
                 "BARRYPC",
                 Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
                 "-", 0,
-                "Impersonation"
+                "Impersonation", "%%1843", (ulong) 0
             };
 
             Assert.True(EventLogListener.IsNotValid(test));
@@ -109,15 +109,136 @@ namespace Seq.Client.WindowsLogins.Tests
                 "BARRYPC",
                 Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE", "-",
                 1111,
-                "All The Impersonation"
+                "All The Impersonation", "%%1843", (ulong) 0
             };
 
             Assert.True(EventLogListener.IsNotValid(test));
         }
 
         /// <summary>
-        ///     Ensure valid failure event properties will be passed (event 4625)
+        ///     Ensure the non-elevated linked logon token is filtered for admin RDP users.
+        ///     When an admin logs in via RDP, Windows creates two linked logon sessions (elevated and
+        ///     filtered/non-elevated tokens). The non-elevated linked token must be filtered to avoid duplicates.
         /// </summary>
+        [Fact]
+        public void EvaluatesLinkedNonElevatedLogonFiltered()
+        {
+            // Simulates the non-elevated (filtered) token: ElevatedToken=%%1843, TargetLinkedLogonId != 0
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry",
+                "S-1-5-21-1234", "Barry", "BARRY", "Barry", (uint) 10, "Barry", "BarryAuth",
+                "BARRYPC",
+                Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
+                "10.80.6.1", 0,
+                "Impersonation", "%%1843", (ulong) 57606888
+            };
+
+            Assert.True(EventLogListener.IsNotValid(test));
+        }
+
+        /// <summary>
+        ///     Ensure the elevated linked logon token is accepted for admin RDP users.
+        ///     The elevated token (ElevatedToken=%%1842) of the linked pair must be kept.
+        /// </summary>
+        [Fact]
+        public void EvaluatesLinkedElevatedLogonAccepted()
+        {
+            // Simulates the elevated token: ElevatedToken=%%1842, TargetLinkedLogonId != 0
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry",
+                "S-1-5-21-1234", "Barry", "BARRY", "Barry", (uint) 10, "Barry", "BarryAuth",
+                "BARRYPC",
+                Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
+                "10.80.6.1", 0,
+                "Impersonation", "%%1842", (ulong) 57606917
+            };
+
+            Assert.False(EventLogListener.IsNotValid(test));
+        }
+
+        /// <summary>
+        ///     Ensure a non-admin RDP logon (ElevatedToken=%%1843, no linked session) is accepted.
+        ///     Non-admin users have no linked logon session, so TargetLinkedLogonId == 0.
+        /// </summary>
+        [Fact]
+        public void EvaluatesNonAdminRdpLogonAccepted()
+        {
+            IList<object> test = new List<object>
+            {
+                "00000000-0000-0000-0000-000000000001", "Barry", "BARRY", "Barry",
+                "S-1-5-21-1234", "Barry", "BARRY", "Barry", (uint) 10, "Barry", "BarryAuth",
+                "BARRYPC",
+                Guid.Parse("00000000-0000-0000-0000-000000000000"), "Barries", "Barry", 1024, 1, " BARRY.EXE",
+                "10.80.6.1", 0,
+                "Impersonation", "%%1843", (ulong) 0
+            };
+
+            Assert.False(EventLogListener.IsNotValid(test));
+        }
+
+        /// <summary>
+        ///     Ensure a valid 4634 logoff event (interactive type 7, RDP reconnect session) is accepted
+        /// </summary>
+        [Fact]
+        public void EvaluatesValidLogoffEventType7()
+        {
+            IList<object> test = new List<object>
+            {
+                "S-1-5-21-1234", "Barry", "BARRY", "Barry", (uint) 7
+            };
+
+            Assert.False(EventLogListener.IsLogoffNotValid(test, false));
+        }
+
+        /// <summary>
+        ///     Ensure a 4634 logoff event for a Window Manager (DWM) virtual account is filtered.
+        ///     DWM-x accounts (SID prefix S-1-5-90-) are created per RDP session and generate spurious logoff events.
+        /// </summary>
+        [Fact]
+        public void EvaluatesDwmLogoffEventFiltered()
+        {
+            IList<object> test = new List<object>
+            {
+                "S-1-5-90-0-2", "DWM-2", "Window Manager", "Barry", (uint) 2
+            };
+
+            Assert.True(EventLogListener.IsLogoffNotValid(test, false));
+        }
+
+        /// <summary>
+        ///     Ensure a 4634 logoff event for a Font Driver Host (UMFD) virtual account is filtered.
+        ///     UMFD-x accounts (SID prefix S-1-5-96-) are created per RDP session and generate spurious logoff events.
+        /// </summary>
+        [Fact]
+        public void EvaluatesUmfdLogoffEventFiltered()
+        {
+            IList<object> test = new List<object>
+            {
+                "S-1-5-96-0-2", "UMFD-2", "Font Driver Host", "Barry", (uint) 2
+            };
+
+            Assert.True(EventLogListener.IsLogoffNotValid(test, false));
+        }
+
+        /// <summary>
+        ///     Ensure a 4647 user-initiated logoff event for a DWM virtual account is also filtered.
+        ///     The SID check applies regardless of event type (4634 or 4647).
+        /// </summary>
+        [Fact]
+        public void EvaluatesDwmUserInitiatedLogoffFiltered()
+        {
+            IList<object> test = new List<object>
+            {
+                "S-1-5-90-0-2", "DWM-2", "Window Manager", "Barry"
+            };
+
+            Assert.True(EventLogListener.IsLogoffNotValid(test, true));
+        }
+
+        /// <summary>
+        ///     Ensure valid failure event properties will be passed (event 4625)
         [Fact]
         public void EvaluatesValidFailureEvent()
         {

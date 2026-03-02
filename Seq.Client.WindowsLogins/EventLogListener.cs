@@ -200,12 +200,14 @@ namespace Seq.Client.WindowsLogins
                     "Event/EventData/Data[@Name='ProcessName']",
                     "Event/EventData/Data[@Name='IpAddress']",
                     "Event/EventData/Data[@Name='IpPort']",
-                    "Event/EventData/Data[@Name='ImpersonationLevel']"
+                    "Event/EventData/Data[@Name='ImpersonationLevel']",
+                    "Event/EventData/Data[@Name='ElevatedToken']",
+                    "Event/EventData/Data[@Name='TargetLinkedLogonId']"
                 });
 
                 var eventProperties = ((EventLogRecord) entry).GetPropertyValues(loginEventPropertySelector);
 
-                if (eventProperties.Count != 21)
+                if (eventProperties.Count != 23)
                 {
                     _unhandledEvents++;
                     return;
@@ -260,6 +262,8 @@ namespace Seq.Client.WindowsLogins
                     .AddProperty("IpAddress", eventProperties[18])
                     .AddProperty("IpPort", eventProperties[19])
                     .AddProperty("ImpersonationLevel", eventProperties[20])
+                    .AddProperty("ElevatedToken", eventProperties[21])
+                    .AddProperty("TargetLinkedLogonId", eventProperties[22])
                     .AddProperty(nameof(Config.ProjectKey), Config.ProjectKey)
                     .AddProperty(nameof(Config.Priority), Config.Priority)
                     .AddProperty(nameof(Config.Responders), Config.Responders)
@@ -486,8 +490,11 @@ namespace Seq.Client.WindowsLogins
             //by the IpAddress check. Type 7 events with IpAddress="-" are local console unlocks and are also filtered.
             //Note: LogonGuid is intentionally not checked here; on standalone servers using NTLM it is always all-zeros,
             //which would incorrectly suppress RDP (type 7/10) logons.
+            //For admin users, Windows creates two linked logon sessions (elevated and filtered/non-elevated tokens).
+            //The non-elevated linked token (ElevatedToken=%%1843, TargetLinkedLogonId!=0) is filtered to avoid duplicates.
             return ((uint) eventProperties[8] != 2 && (uint) eventProperties[8] != 7 && (uint) eventProperties[8] != 10) ||
-                   (string) eventProperties[18] == "-";
+                   (string) eventProperties[18] == "-" ||
+                   ((ulong) eventProperties[22] != 0 && eventProperties[21].ToString() == "%%1843");
         }
 
         public static bool IsFailureNotValid(IList<object> eventProperties)
@@ -500,10 +507,17 @@ namespace Seq.Client.WindowsLogins
 
         public static bool IsLogoffNotValid(IList<object> eventProperties, bool isUserInitiated)
         {
+            //Filter Windows virtual session accounts (Window Manager/DWM, SID prefix S-1-5-90-, and
+            //Font Driver Host/UMFD, SID prefix S-1-5-96-) that are created per RDP session but are
+            //not actual user accounts. Their logoff events fire when the RDP session disconnects.
+            var sid = eventProperties[0].ToString();
+            if (sid.StartsWith("S-1-5-90-") || sid.StartsWith("S-1-5-96-"))
+                return true;
+
             //For event 4647 (user-initiated logoff) there is no LogonType field; always include it.
-            //For event 4634, only interactive logon types 2 and 10 are of interest (LogonType is at index 4).
+            //For event 4634, only interactive logon types 2, 7, and 10 are of interest (LogonType is at index 4).
             return !isUserInitiated &&
-                   (uint) eventProperties[4] != 2 && (uint) eventProperties[4] != 10;
+                   (uint) eventProperties[4] != 2 && (uint) eventProperties[4] != 7 && (uint) eventProperties[4] != 10;
         }
     }
 }
